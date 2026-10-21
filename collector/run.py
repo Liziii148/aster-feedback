@@ -57,9 +57,11 @@ def run():
     time.sleep(max(2,float(cfg['interval_seconds'])))
    browser.close()
  finally:
-  report={'allPlatformCoverage':False,'startDate':cfg['start_date'],'notes':notes,'retainedRecords':len(rows),'verificationBlocked':restricted,'status':'partial' if rows else 'no_data'}
+  report={'allPlatformCoverage':False,'startDate':cfg['start_date'],'notes':notes,'retainedRecords':len(rows),'verificationBlocked':restricted,'status':('partial_comments_observed' if any(r['type']=='评论' for r in rows) else 'comments_not_observed') if rows else 'no_data'}
   (OUT/'feedback.json').write_text(json.dumps({'version':1,'records':rows},ensure_ascii=False,indent=2),encoding='utf-8')
   (OUT/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
   print('Retained records:',len(rows),'-- partial observations only; inspect report.json.')
- return 0 if rows and not restricted else 2
+ if not any(r['type']=='评论' for r in rows):
+  print('::warning::No comments were observed. Collection is incomplete; this is not zero user feedback.')
+ return 0 if any(r['type']=='评论' for r in rows) and not restricted else 2
 if __name__=='__main__':sys.exit(run())
