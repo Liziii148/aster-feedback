@@ -17,7 +17,7 @@ function normalize(x,{restore=false}={}){
  let labels;if(Array.isArray(x.labels))labels=x.labels;else labels=(Array.isArray(x.features)?x.features:[]).map(feature=>({feature,sentiments:Array.isArray(x.sentiments)?x.sentiments:[]}));
  for(const l of labels)if(!l||!FEATURES.includes(l.feature)||!Array.isArray(l.sentiments)||l.sentiments.some(s=>!SENTIMENTS.includes(s)))throw Error('标签中存在未支持的功能或态度');
  labels=labels.map(l=>({feature:l.feature,sentiments:[...new Set(l.sentiments)]}));
- const r={...x,type,sourceId,parentId,url:u,date,title,text,labels,context:String(x.context||''),rawDate:String(x.rawDate||''),bodyStatus:x.bodyStatus||'loaded',systemVersion:['2.1.0','other','unknown'].includes(x.systemVersion)?x.systemVersion:'unknown',relevance:['system','unrelated','unknown'].includes(x.relevance)?x.relevance:'unknown',status:restore&&['pending','approved','excluded'].includes(x.status)?x.status:'pending',id:key({type,sourceId,parentId,url:u}),candidate:!!x.candidate||signal.test(text+' '+title),reason:String(x.reason||'')};
+ const r={...x,type,sourceId,parentId,url:u,date,title,text,labels,context:String(x.context||''),rawDate:String(x.rawDate||''),bodyStatus:x.bodyStatus||'loaded',systemVersion:['2.1.0','other','unknown'].includes(x.systemVersion)?x.systemVersion:'unknown',relevance:['system','unrelated','unknown'].includes(x.relevance)?x.relevance:'unknown',status:restore&&['pending','approved','excluded'].includes(x.status)?x.status:'pending',id:key({type,sourceId,parentId,url:u}),candidate:!!x.candidate||labels.length>0||signal.test(text+' '+title+' '+String(x.context||'')),reason:String(x.reason||'')};
  if(!r.labels.length)r.labels=suggest(r);
  if(!r.reason)r.reason=r.candidate?'文本出现系统/功能相关信号，需确认上下文及版本':'尚未发现明确系统信号，保留在全部语料，未自动排除';
  return r;
