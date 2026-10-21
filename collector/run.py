@@ -1,67 +1,74 @@
-"""GitHub-hosted public-page probe. Does not log in or bypass restrictions."""
+"""Broad public search -> corpus -> system/function candidates. No authentication bypass."""
 import json,re,time,sys
 from pathlib import Path
+from urllib.parse import quote
 from datetime import datetime
-from core import allowed_url,record
-BASE=Path(__file__).resolve().parent
-OUT=BASE.parent/'output'
+from core import day,record,allowed_url
+from screen import screen
+BASE=Path(__file__).resolve().parent;OUT=BASE.parent/'output'
+CARDS='''() => [...document.querySelectorAll('a.cover[href*="/search_result/"]')].filter(a=>a.getClientRects().length).map(a=>({sourceId:(a.getAttribute('href').match(/\\/search_result\\/([0-9a-f]{24})/)||[])[1],url:a.href,title:a.parentElement.querySelector('.title')?.innerText||'',rawDate:a.parentElement.querySelector('.time')?.innerText||''}))'''
+BLOCK=re.compile(r'访问过于频繁|访问频繁|异常流量|安全验证|请完成验证|网络环境存在风险|账号异常|账号风险')
 def run():
  from playwright.sync_api import sync_playwright
- cfg=json.loads((BASE/'config.json').read_text(encoding='utf-8'));rows=[];notes=[];seen=set();restricted=False
- OUT.mkdir(exist_ok=True)
+ cfg=json.loads((BASE/'config.json').read_text(encoding='utf-8'));OUT.mkdir(exist_ok=True);rows=[];cards={};report={'allPlatformCoverage':False,'startDate':cfg['start_date'],'queries':[],'readFailures':[],'dateUnknown':0,'commentsCollected':0,'stopReason':'finished_with_limits','authentication':'public_pages_only'}
+ def save():
+  payload={'version':3,'records':rows,'coverage':report}
+  (OUT/'corpus.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+  (OUT/'system-candidates.json').write_text(json.dumps({**payload,'records':[r for r in rows if r.get('candidate')]},ensure_ascii=False,indent=2),encoding='utf-8')
+  (OUT/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
  try:
   with sync_playwright() as p:
-   browser=p.chromium.launch(headless=True)
-   page=browser.new_page(viewport={'width':1280,'height':850},timezone_id='Asia/Shanghai')
-   extract=(BASE/'extract.js').read_text(encoding='utf-8')
-   for index,url in enumerate(cfg['urls'][:int(cfg['max_notes'])]):
-    result={'index':index+1,'complete':False,'status':'failed','observedComments':0}
-    try:
-     if not allowed_url(url):raise ValueError('invalid_url')
-     page.goto(url,wait_until='domcontentloaded',timeout=45000)
+   browser=p.chromium.launch(headless=True);page=browser.new_page(viewport={'width':1280,'height':850},timezone_id='Asia/Shanghai')
+   for keyword in cfg['keywords']:
+    q={'keyword':keyword,'sort':'default_comprehensive','loadedCards':0,'rounds':0,'stopReason':'round_limit'};report['queries'].append(q);stable=0
+    page.goto('https://www.xiaohongshu.com/search_result?keyword='+quote(keyword),wait_until='domcontentloaded',timeout=45000)
+    try:page.locator('a.cover[href*="/search_result/"]').first.wait_for(state='visible',timeout=12000)
+    except Exception:q['stopReason']='no_visible_results_or_login_required';continue
+    seen=set()
+    for turn in range(cfg['search_scroll_rounds']):
      body=page.locator('body').inner_text(timeout=10000)
-     if re.search(r'访问过于频繁|访问频繁|异常流量|安全验证|请完成验证|网络环境存在风险|账号异常|账号风险',body):
-      result['status']='verification_or_access_limited';restricted=True;notes.append(result);break
-     try:page.locator('#detail-desc').wait_for(state='visible',timeout=12000)
-     except Exception:
-      result['status']='login_required' if '登录' in body else 'body_unavailable';notes.append(result);continue
-     match=re.search(r'/(?:explore|discovery/item)/([A-Za-z0-9]+)',page.url)
-     if not match:result['status']='note_id_unavailable';notes.append(result);continue
-     nid=match[1]
-     if nid in seen:continue
-     seen.add(nid);data=page.evaluate(extract);post_text=data['title']+'\n'+data['description']
-     post=record('帖子',nid,'',url,post_text,data['rawDate']);post['versionConfirmed']=False
-     if not post['date'] or post['date']>=cfg['start_date']:rows.append(post)
-     found={};stable=0;reason='scroll_limit';limited=False
-     for i in range(int(cfg['max_scrolls_per_note'])+1):
-      body=page.locator('body').inner_text(timeout=10000)
-      if re.search(r'访问过于频繁|访问频繁|异常流量|安全验证|请完成验证|网络环境存在风险',body):
-       restricted=True;reason='access_limited';break
-      data=page.evaluate(extract);before=len(found)
-      for c in data['comments']:found[c['sourceId']]=c
-      stable=stable+1 if before==len(found) else 0
-      if data['loginLimited']:limited=True;reason='login_limited';break
-      if stable>=2:reason='no_new_visible_comments';break
-      if i==int(cfg['max_scrolls_per_note']):break
-      page.evaluate('''() => {let n=document.querySelector('[id^="comment-"]')||document.querySelector('#detail-desc');while(n){if(n.scrollHeight>n.clientHeight+40&&/auto|scroll/.test(getComputedStyle(n).overflowY)){n.scrollBy(0,650);return;}n=n.parentElement;}window.scrollBy(0,650);}''')
-      time.sleep(max(2,float(cfg['interval_seconds'])))
-     for c in found.values():
-      r=record('评论',c['sourceId'],nid,url,c['text'],c['rawDate'],post_text)
-      if not r['date'] or r['date']>=cfg['start_date']:rows.append(r)
-     result.update(noteId=nid,status='partial',observedComments=len(found),loginLimited=limited,stopReason=reason)
+     if BLOCK.search(body):q['stopReason']='access_limited';report['stopReason']='access_limited';save();return 2
+     batch=page.evaluate(CARDS);before=len(seen)
+     for c in batch:
+      if not c['sourceId']:continue
+      seen.add(c['sourceId']);date,quality=day(c['rawDate']);c.update(date=date,dateQuality=quality)
+      if not date or date>=cfg['start_date']:
+       old=cards.get(c['sourceId'],{});c['queries']=list(dict.fromkeys(old.get('queries',[])+[keyword]));cards[c['sourceId']]=c
+     stable=stable+1 if len(seen)==before else 0;q.update(loadedCards=len(seen),rounds=turn+1)
+     if stable>=3:q['stopReason']='no_new_visible_results';break
+     page.mouse.wheel(0,1600);time.sleep(cfg['interval_seconds'])
+    save()
+   # Explicit seed links supplement, never replace broad keyword discovery.
+   for i,u in enumerate(cfg.get('urls',[])):
+    cards['seed-'+str(i)]={'url':u,'sourceId':'','title':'','rawDate':'','queries':['user_seed']}
+   report['recentOrUnknownDiscovered']=len(cards)
+   for index,c in enumerate(cards.values()):
+    if index>=cfg['max_notes']:report['stopReason']='note_limit';break
+    result=None
+    try:
+     if not allowed_url(c['url']):continue
+     page.goto(c['url'],wait_until='domcontentloaded',timeout=45000)
+     body=page.locator('body').inner_text(timeout=10000)
+     if BLOCK.search(body):report['stopReason']='access_limited';break
+     page.locator('#detail-desc').wait_for(state='visible',timeout=12000)
+     data=page.evaluate((BASE/'extract.js').read_text(encoding='utf-8'))
+     match=re.search(r'/(?:explore|search_result|discovery/item)/([A-Za-z0-9]+)',page.url);nid=match[1] if match else c['sourceId']
+     if not nid:continue
+     text=(data['title']+'\n'+data['description']).strip();raw=data['rawDate'] or c['rawDate'];date,quality=day(raw,post=True)
+     if date and date<cfg['start_date']:continue
+     result=record('帖子',nid,'',c['url'],text or c['title'] or '无标题，正文待读取',raw)
+     result.update(title=data['title'] or c['title'],bodyStatus='loaded' if text else 'card_only',queries=c['queries'],systemVersion='unknown',relevance='unknown',status='pending')
     except Exception:
-     # Avoid dumping page URLs, tokens, raw text or stack traces into Actions logs.
-     result['status']='navigation_or_extraction_failed'
-    notes.append(result)
-    if restricted:break
-    time.sleep(max(2,float(cfg['interval_seconds'])))
+     report['readFailures'].append({'sourceId':c['sourceId'],'reason':'navigation_or_body_unavailable'})
+     if c['sourceId']:
+      result=record('帖子',c['sourceId'],'',c['url'],c['title'] or '无标题，正文待读取',c['rawDate']);result.update(title=c['title'],bodyStatus='card_only',queries=c['queries'])
+    if result:
+     result['candidate'],result['reason']=screen(result['text']);result['dateQuality']=result.get('dateQuality','unknown');rows.append(result)
+     report['dateUnknown']=sum(not r.get('date') for r in rows)
+    save();time.sleep(cfg['interval_seconds'])
    browser.close()
  finally:
-  report={'allPlatformCoverage':False,'startDate':cfg['start_date'],'notes':notes,'retainedRecords':len(rows),'verificationBlocked':restricted,'status':('partial_comments_observed' if any(r['type']=='评论' for r in rows) else 'comments_not_observed') if rows else 'no_data'}
-  (OUT/'feedback.json').write_text(json.dumps({'version':1,'records':rows},ensure_ascii=False,indent=2),encoding='utf-8')
-  (OUT/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-  print('Retained records:',len(rows),'-- partial observations only; inspect report.json.')
- if not any(r['type']=='评论' for r in rows):
-  print('::warning::No comments were observed. Collection is incomplete; this is not zero user feedback.')
- return 0 if any(r['type']=='评论' for r in rows) and not restricted else 2
+  rows=list({(r['type'],r['sourceId']):r for r in rows}.values());report['retainedPosts']=len(rows);report['systemCandidates']=sum(bool(r.get('candidate')) for r in rows);report['status']='partial_corpus_no_comment_collection';save()
+  print('::warning::This run collects publicly visible post text only, not complete search coverage or comments. Read report.json.')
+ return 0 if rows and report['stopReason']!='access_limited' else 2
 if __name__=='__main__':sys.exit(run())

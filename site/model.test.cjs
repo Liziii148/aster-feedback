@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict');const M=require('./model.js');
+const base={type:'帖子',sourceId:'p1',url:'https://www.xiaohongshu.com/explore/p1',text:'QQ音乐好用，语音卡顿',date:'2026-10-16',relevance:'system',systemVersion:'2.1.0',status:'approved',labels:[{feature:'QQ音乐',sentiments:['赞赏']},{feature:'lumo语音功能',sentiments:['抱怨']}]};
+const r=M.normalize(base,{restore:true});
+assert.equal(M.count([r],'QQ音乐','赞赏','帖子'),1);assert.equal(M.count([r],'QQ音乐','抱怨','帖子'),0);assert.equal(M.count([r],'lumo语音功能','赞赏','帖子'),0);assert.equal(M.count([r,r],'lumo语音功能','抱怨','帖子'),1);
+assert.equal(M.count([{...r,date:''}],'QQ音乐','赞赏','帖子'),0);assert.equal(M.count([{...r,systemVersion:'unknown'}],'QQ音乐','赞赏','帖子'),0);assert.equal(M.count([{...r,status:'pending'}],'QQ音乐','赞赏','帖子'),0);
+assert.equal(M.count([{...r,labels:[{feature:'QQ音乐',sentiments:['中性/操作说明']}]}],'QQ音乐',null,'帖子'),0);
+assert.equal(M.normalize(base).status,'pending');assert.ok(M.canApprove({...r,bodyStatus:'card_only'}));assert.ok(M.inRange({...r,date:''},'2026-10-15','',true));assert.ok(!M.inRange({...r,date:''},'2026-10-15','',false));
+assert.equal(M.merge([r],[{...r,text:'正文有更新'}]).records[0].status,'pending');assert.equal(M.merge([r],[r]).duplicate,1);
+assert.throws(()=>M.normalize({...base,url:'javascript:alert(1)'}));assert.throws(()=>M.normalize({...base,date:'2026-02-30'}));assert.throws(()=>M.normalize({...base,type:'评论',sourceId:''}));
+assert.equal(M.suggest({text:'关闭连续对话就可以了',title:''}).length,0);assert.equal(M.FEATURES.length,28);
+console.log('PASS: feature-attitude pairs; date/version/status exclusions; dedup; legacy import; neutral; unsafe URLs; validation; revised text resets review.');
