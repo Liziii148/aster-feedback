@@ -7,5 +7,5 @@ assert.equal(M.count([{...r,labels:[{feature:'QQ音乐',sentiments:['中性/操�
 assert.equal(M.normalize(base).status,'pending');assert.ok(M.canApprove({...r,bodyStatus:'card_only'}));assert.ok(M.inRange({...r,date:''},'2026-10-15','',true));assert.ok(!M.inRange({...r,date:''},'2026-10-15','',false));
 assert.equal(M.merge([r],[{...r,text:'正文有更新'}]).records[0].status,'pending');assert.equal(M.merge([r],[r]).duplicate,1);
 assert.throws(()=>M.normalize({...base,url:'javascript:alert(1)'}));assert.throws(()=>M.normalize({...base,date:'2026-02-30'}));assert.throws(()=>M.normalize({...base,type:'评论',sourceId:''}));
-assert.equal(M.suggest({text:'关闭连续对话就可以了',title:''}).length,0);assert.equal(M.FEATURES.length,28);
+assert.equal(M.suggest({text:'关闭连续对话就可以了',title:''}).length,0);assert.equal(M.FEATURES.length,28);assert.ok(M.canApprove({...r,mediaNeedsReview:true,mediaReviewed:false}));assert.equal(M.count([{...r,systemVersion:'unknown',labels:[{feature:'许愿：其他',sentiments:['建议']}]}],'许愿：其他','建议','帖子'),1);
 console.log('PASS: feature-attitude pairs; date/version/status exclusions; dedup; legacy import; neutral; unsafe URLs; validation; revised text resets review.');
